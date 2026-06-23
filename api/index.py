@@ -1,9 +1,7 @@
 import sys
-import os
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
 
-from mangum import Mangum
-from main import app
-
-handler = Mangum(app)
+from main import app  # noqa: E402, F401
