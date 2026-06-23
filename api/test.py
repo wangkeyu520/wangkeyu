@@ -1,18 +1,12 @@
-import json
+from http.server import BaseHTTPRequestHandler
 
-def handler(event, context):
-    try:
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({'status': 'ok', 'message': 'Python handler is working'})
-        }
-    except Exception as e:
-        return {
-            'statusCode': 500,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': str(e)})
-        }
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
+        response = {'status': 'ok', 'message': 'Vercel Python handler is working'}
+        self.wfile.write(str(response).encode())
+        return

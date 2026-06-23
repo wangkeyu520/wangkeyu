@@ -1,13 +1,19 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import os
 import requests
-import json
 import logging
 import time
 from functools import wraps
 from typing import Callable, Dict, Any
 from collections import defaultdict
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,13 +38,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "sk-cb38a6aa4cbc466aa37100f289f45eb6"
-BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+BASE_URL = os.getenv(
+    "DASHSCOPE_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
 
+IS_VERCEL = os.getenv("VERCEL") == "1"
 RATE_LIMIT = 5
 RATE_LIMIT_WINDOW = 60
 
 client_request_counts: Dict[str, list] = defaultdict(list)
+
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
 
 def retry_on_failure(max_retries: int = 3, delay: float = 1.0, backoff_factor: float = 2.0):
     def decorator(func: Callable) -> Callable:
@@ -72,8 +91,7 @@ async def request_logging_middleware(request: Request, call_next):
     
     logger.info(
         f"收到请求: {request.method} {request.url} "
-        f"IP: {request.client.host} "
-        f"Headers: {dict(request.headers)}"
+        f"IP: {get_client_ip(request)}"
     )
     
     try:
@@ -101,7 +119,10 @@ async def request_logging_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    client_ip = request.client.host
+    if IS_VERCEL or request.url.path == "/api/health":
+        return await call_next(request)
+
+    client_ip = get_client_ip(request)
     current_time = time.time()
     
     client_request_counts[client_ip] = [
@@ -120,12 +141,16 @@ async def rate_limit_middleware(request: Request, call_next):
     
     return await call_next(request)
 
-@retry_on_failure(max_retries=3, delay=1.0, backoff_factor=2.0)
+@retry_on_failure(
+    max_retries=2 if IS_VERCEL else 3,
+    delay=0.5 if IS_VERCEL else 1.0,
+    backoff_factor=2.0,
+)
 def call_ai_api(model_name: str, messages: list):
     url = f"{BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"
+        "Authorization": f"Bearer {API_KEY}",
     }
     payload = {
         "model": model_name,
@@ -198,6 +223,12 @@ XIAOHONGSHU_PROMPT_TEMPLATE = """你是一个在{store_name}（位于{location}�
 
 @app.post("/api/generate-review", tags=["评价生成"])
 async def generate_review(request: GenerateReviewRequest):
+    if not API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="服务端未配置 DASHSCOPE_API_KEY 环境变量",
+        )
+
     try:
         logger.info(
             f"收到评价生成请求: 平台={request.platform}, "
@@ -259,6 +290,9 @@ async def generate_review(request: GenerateReviewRequest):
             }
         }
     
+    except HTTPException:
+        raise
+
     except requests.exceptions.RequestException as e:
         logger.error(f"网络连接失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="网络连接失败，请稍后重试")
