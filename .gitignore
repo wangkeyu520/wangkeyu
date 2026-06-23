@@ -1,10 +1,9 @@
 # Dependencies
-frontend/node_modules/
+frontend/
 backend/.venv/
 .venv/
 
 # Build output
-frontend/dist/
 .vercel/
 
 # Python
